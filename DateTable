@@ -1,0 +1,53 @@
+let
+    // The FiscalYearEnd determines in which month the fiscal year ends. If necessary you can adjust it. 
+    FiscalYearEnd = 3,
+    Today = Date.From(DateTime.LocalNow()),
+    // Sets the start date for your calendar
+    StartDate = #date(2023, 1, 1),
+    // The calendar runs until the end of the current year. Change this if you need your calendar to run to another date. 
+    EndDate = Date.EndOfYear(Today),
+    // The current Fiscal Year value is a helper value for other calculations
+    CurrentFiscalYear = Date.Year( Date.AddMonths( Today, 12 - FiscalYearEnd ) ),
+    ListOfDates = List.Dates(StartDate, Duration.Days(EndDate - StartDate) + 1, #duration(1, 0, 0, 0)),
+    MyDateTable = Table.FromList(ListOfDates, Splitter.SplitByNothing(), type table[Date = date], null, ExtraValues.Error),
+    Add_FiscalYearNumber = Table.AddColumn(MyDateTable, "FiscalYear", each Date.Year( Date.AddMonths([ Date], 12 - FiscalYearEnd ) ), Int64.Type),  
+    Add_FiscalYearLabel = Table.AddColumn(Add_FiscalYearNumber, "FiscalYearLabel", each "FY" & Text.From([FiscalYear]), Text.Type),
+    // Allows you to select the 'Current' or 'Previous' year dynamically. For further reading, refer to: https://gorilla.bi/power-bi/set-default-slicer-value/
+    Add_FiscalYearDefault = Table.AddColumn(Add_FiscalYearLabel, "FiscalYearDefault", each if [FiscalYear] = CurrentFiscalYear then "Current" else if [FiscalYear] = (CurrentFiscalYear -1 ) then "Previous" else "FY" & Text.From( [FiscalYear] ), Text.Type), 
+    Add_FiscalStartOfYear = Table.AddColumn(Add_FiscalYearDefault, "FiscalStartOfYear", each [
+  Offset = if FiscalYearEnd = 12 then 0 else FiscalYearEnd - 12,
+  FiscalStartOfYear = Date.AddMonths( Date.StartOfYear( [Date] ), Offset )
+][FiscalStartOfYear], Date.Type),  
+    Add_FiscalEndOfYear = Table.AddColumn(Add_FiscalStartOfYear, "FiscalEndOfYear", each Date.AddMonths(Date.EndOfYear([Date]), FiscalYearEnd - 12), Date.Type),
+// A year Offset value indicates the relative position of the current year (based on today's date) compared to the year in the current row. Returns 0 for the current year, -1 for the previous.
+    Add_FiscalYearOffset = Table.AddColumn(Add_FiscalEndOfYear, "FiscalYearOffset", each [ 
+  FiscalQuarterOffset = (([FiscalYear] - CurrentFiscalYear) )
+][FiscalQuarterOffset], Int64.Type ), 
+    Add_FiscalMonthNumber = Table.AddColumn(Add_FiscalYearOffset, "FiscalMonth", each Date.Month( Date.AddMonths([Date], - FiscalYearEnd ) ), Int64.Type),  
+    // Allows you to select the 'Current' or 'Previous' month dynamically. For further reading, refer to: https://gorilla.bi/power-bi/set-default-slicer-value/
+    Add_FiscalMonthDefault = Table.AddColumn(Add_FiscalMonthNumber, "FiscalMonthDefault", each if Date.IsInCurrentMonth([Date]) then "Current" else if Date.IsInPreviousMonth([Date]) then "Previous" else Text.From( [FiscalMonth] ), Text.Type),
+    Add_FiscalQuarterNumber = Table.AddColumn(Add_FiscalMonthDefault, "FiscalQuarter", each Number.RoundUp( [FiscalMonth] / 3), Int64.Type), 
+    Add_FiscalQuarterLabel = Table.AddColumn(Add_FiscalQuarterNumber, "FiscalQuarterLabel", each "FQ" & Text.From([FiscalQuarter]), Text.Type),
+    Add_FiscalMonthOfQuarter = Table.AddColumn(Add_FiscalQuarterLabel, "FiscalMonthOfQuarter", each 
+[FiscalMonth] - 3 * ([FiscalQuarter] - 1) , Int64.Type ),
+    Add_FiscalYearQuarterLabel = Table.AddColumn(Add_FiscalMonthOfQuarter, "FiscalYearQuarterLabel", each "FY" & Text.From( [FiscalYear] ) & " Q" & Text.From( [FiscalQuarter] ), Text.Type),  
+    Add_FiscalStartOfQuarter = Table.AddColumn(Add_FiscalYearQuarterLabel, "FiscalStartOfQuarter", each 
+Date.StartOfMonth( Date.AddMonths( [Date] , 1-[FiscalMonthOfQuarter] )), Date.Type), 
+    Add_FiscalEndOfQuarter = Table.AddColumn(Add_FiscalStartOfQuarter, "FiscalEndOfQuarter", each 
+Date.EndOfMonth( Date.AddMonths( [Date] , 3-[FiscalMonthOfQuarter] )), Date.Type),
+// A year Offset value indicates the relative position of the current quarter (based on today's date) compared to the quarter in the current row. Returns 0 for the current quarter, -1 for the previous.
+    Add_FiscalQuarterOffset = Table.AddColumn(Add_FiscalEndOfQuarter, "FiscalQuarterOffset", each [ 
+  CurrentFiscalMonth = Date.Month( Date.AddMonths( Today, - FiscalYearEnd ) ),
+  CurrentFiscalQuarter = Number.RoundUp(CurrentFiscalMonth / 3),
+  FiscalQuarterOffset = (([FiscalYear] - CurrentFiscalYear) * 4) + ([FiscalQuarter] - CurrentFiscalQuarter)
+][FiscalQuarterOffset], Int64.Type ),
+    Add_FiscalQuarterMonthLabel = Table.AddColumn(Add_FiscalQuarterOffset, "FiscalQuarterMonthLabel", each "FQ" & Text.From( [FiscalQuarter] ) & ": " & Date.ToText( [FiscalStartOfQuarter], "MMM yyyy" ) & " - " & Date.ToText( [FiscalEndOfQuarter], "MMM yyyy" ), type text ),
+    Add_FiscalDayOfQuarter = Table.AddColumn(Add_FiscalQuarterMonthLabel, "FiscalDayOfQuarter", each Number.From( [Date] - 
+[FiscalStartOfQuarter] ) + 1, Int64.Type ),
+  // Renames all columns so they have spaces between words. Also removes underscores.
+    #"Rename Columns" = Table.TransformColumnNames(Add_FiscalDayOfQuarter, each [
+  SplitTextByTransition =  Splitter.SplitTextByCharacterTransition({"a".."z"}, {"A".."Z"})(_), 
+  CombineValues = Text.Combine( SplitTextByTransition, " " ), 
+  RemoveUnderscores = Text.Replace( CombineValues, "_", " ") ][RemoveUnderscores] )
+in
+    #"Rename Columns"
